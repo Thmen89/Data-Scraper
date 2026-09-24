@@ -12,7 +12,13 @@ class StateTests(unittest.TestCase):
         other = filenames_for("private_key:1", "Quarterly / Report")
         self.assertEqual(first, second)
         self.assertNotEqual(first, other)
-        self.assertRegex(first[0], r"^Quarterly-Report-[a-f0-9]{12}\.pdf$")
+        self.assertRegex(first[0], r"^doc-[a-f0-9]{12}-Quarterly-Report\.pdf$")
+
+    def test_filenames_avoid_windows_device_names(self):
+        for title in ("CON.summary", "NUL.report", "LPT1.notes"):
+            pdf_name, _ = filenames_for(title, title)
+            self.assertTrue(pdf_name.startswith("doc-"))
+            self.assertNotEqual(pdf_name.split(".", 1)[0].upper(), title.split(".", 1)[0])
 
     def test_upsert_preserves_successful_progress(self):
         with tempfile.TemporaryDirectory() as temporary:

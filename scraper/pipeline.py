@@ -6,6 +6,7 @@ import http.cookiejar
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
@@ -40,7 +41,10 @@ def _validate_download_url(url: str, allowed_hosts: tuple[str, ...]) -> None:
 
 
 def _cookie_jar(cookies: list[dict[str, object]]) -> http.cookiejar.CookieJar:
-    jar = http.cookiejar.CookieJar()
+    policy = http.cookiejar.DefaultCookiePolicy(
+        strict_ns_domain=http.cookiejar.DefaultCookiePolicy.DomainStrictNonDomain
+    )
+    jar = http.cookiejar.CookieJar(policy=policy)
     for item in cookies:
         domain = str(item.get("domain", ""))
         name = str(item.get("name", ""))
@@ -56,7 +60,7 @@ def _cookie_jar(cookies: list[dict[str, object]]) -> http.cookiejar.CookieJar:
                 port=None,
                 port_specified=False,
                 domain=domain,
-                domain_specified=True,
+                domain_specified=domain.startswith("."),
                 domain_initial_dot=domain.startswith("."),
                 path=str(item.get("path", "/")),
                 path_specified=True,
@@ -89,7 +93,15 @@ def download_pdf(
     temporary = destination.with_suffix(destination.suffix + ".part")
     temporary.unlink(missing_ok=True)
     try:
-        with opener.open(request, timeout=settings.request_timeout_seconds) as response:
+        try:
+            response = opener.open(request, timeout=settings.request_timeout_seconds)
+        except urllib.error.HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise AuthenticationError(
+                    f"download returned HTTP {exc.code}; authentication or access has failed"
+                ) from exc
+            raise
+        with response:
             _validate_download_url(response.url, settings.allowed_download_hosts)
             content_type = response.headers.get_content_type()
             if content_type in {"text/html", "application/xhtml+xml"}:
@@ -125,6 +137,7 @@ def discover(driver: WebDriver, adapter: SiteAdapter, state: State) -> int:
 def reconcile_files(state: State, output_dir: Path) -> None:
     for record in state.all_records():
         pdf_path = output_dir / record.pdf_name
+        text_path = output_dir / record.text_name
         if record.download_status == "downloaded" and not pdf_path.is_file():
             state.reset_missing_pdf(record.key)
         elif record.download_status != "downloaded" and pdf_path.is_file():
@@ -134,6 +147,8 @@ def reconcile_files(state: State, output_dir: Path) -> None:
                 pdf_path.unlink(missing_ok=True)
             else:
                 state.mark_downloaded(record.key)
+        if record.extraction_status == "extracted" and not text_path.is_file():
+            state.reset_missing_text(record.key)
 
 
 def process_downloads(
@@ -151,13 +166,14 @@ def process_downloads(
                 settings,
             )
             state.mark_downloaded(record.key)
-            if settings.request_delay_seconds:
-                time.sleep(settings.request_delay_seconds)
         except AuthenticationError as exc:
             state.mark_download_failed(record.key, str(exc))
             raise
         except Exception as exc:
             state.mark_download_failed(record.key, str(exc))
+        finally:
+            if settings.request_delay_seconds:
+                time.sleep(settings.request_delay_seconds)
 
 
 def process_extractions(settings: Settings, state: State) -> None:

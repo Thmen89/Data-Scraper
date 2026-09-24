@@ -78,6 +78,12 @@ def load_settings(path: str | Path) -> Settings:
     item_selector = site_raw.get("item_selector")
     if not isinstance(item_selector, str) or not item_selector.strip():
         raise ConfigError("site.item_selector must be a non-empty CSS selector")
+    key_attribute = site_raw.get("item_key_attribute", "data-id")
+    if not isinstance(key_attribute, str) or not key_attribute.strip():
+        raise ConfigError("site.item_key_attribute must be a non-empty attribute name")
+    download_selector = site_raw.get("download_selector", "a[href]")
+    if not isinstance(download_selector, str) or not download_selector.strip():
+        raise ConfigError("site.download_selector must be a non-empty CSS selector")
 
     browser_raw = raw.get("browser", {})
     if not isinstance(browser_raw, dict):
@@ -130,10 +136,10 @@ def load_settings(path: str | Path) -> Settings:
         site=SiteSettings(
             start_url=start_url,
             item_selector=item_selector,
-            item_key_attribute=str(site_raw.get("item_key_attribute", "data-id")),
+            item_key_attribute=key_attribute,
             item_link_selector=optional_selector("item_link_selector"),
             next_page_selector=optional_selector("next_page_selector"),
-            download_selector=str(site_raw.get("download_selector", "a[href]")),
+            download_selector=download_selector,
         ),
         browser=BrowserSettings(
             headless=headless,

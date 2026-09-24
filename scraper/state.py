@@ -29,7 +29,7 @@ def filenames_for(key: str, title: str = "") -> tuple[str, str]:
     label = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip(".-_") or "document"
     label = label[:60].rstrip(".-_") or "document"
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
-    stem = f"{label}-{digest}"
+    stem = f"doc-{digest}-{label}"
     return f"{stem}.pdf", f"{stem}.txt"
 
 
@@ -139,6 +139,13 @@ class State:
             key,
             "download_status = 'pending', extraction_status = 'pending', error = ?",
             ("Downloaded file was missing; queued again",),
+        )
+
+    def reset_missing_text(self, key: str) -> None:
+        self._update(
+            key,
+            "extraction_status = 'pending', error = ?",
+            ("Extracted text was missing; queued again",),
         )
 
     def counts(self) -> dict[str, int]:

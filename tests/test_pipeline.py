@@ -1,11 +1,20 @@
 import tempfile
 import threading
 import unittest
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 from scraper.config import BrowserSettings, Settings, SiteSettings
-from scraper.pipeline import AuthenticationError, download_pdf, reconcile_files
+from scraper.pipeline import (
+    AuthenticationError,
+    _cookie_jar,
+    download_pdf,
+    process_downloads,
+    process_extractions,
+    reconcile_files,
+)
 from scraper.state import State
 from tests.pdf_factory import pdf_bytes
 
@@ -23,6 +32,10 @@ class DownloadHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/pdf")
             self.send_header("Content-Length", str(len(self.document) + 10_000))
+            self.end_headers()
+            return
+        if self.path == "/unauthorized":
+            self.send_response(401)
             self.end_headers()
             return
         if "session=allowed" not in self.headers.get("Cookie", ""):
@@ -92,6 +105,13 @@ class DownloadTests(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertFalse((root / "saved.pdf.part").exists())
 
+    def test_treats_http_401_as_authentication_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            url = f"http://127.0.0.1:{self.server.server_port}/unauthorized"
+            with self.assertRaises(AuthenticationError):
+                download_pdf(url, root / "saved.pdf", [], self.settings(root))
+
     def test_rejects_disallowed_host_before_request(self):
         with tempfile.TemporaryDirectory() as temporary:
             settings = self.settings(Path(temporary))
@@ -123,6 +143,78 @@ class DownloadTests(unittest.TestCase):
                 (root / record.pdf_name).write_bytes(DownloadHandler.document)
                 reconcile_files(state, root)
                 self.assertEqual(state.get("interrupted").download_status, "downloaded")
+
+    def test_recreates_missing_text_without_redownloading(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.settings(root)
+            with State(root / "state.sqlite3") as state:
+                state.upsert("complete", "https://example.test/detail", "Complete")
+                record = state.get("complete")
+                (root / record.pdf_name).write_bytes(DownloadHandler.document)
+                state.mark_downloaded(record.key)
+                (root / record.text_name).write_text("old text", encoding="utf-8")
+                state.mark_extracted(record.key)
+                (root / record.text_name).unlink()
+
+                reconcile_files(state, root)
+                self.assertEqual(state.records_for_download(3), [])
+                self.assertEqual([r.key for r in state.records_for_extraction()], ["complete"])
+                process_extractions(settings, state)
+                self.assertIn("Cookie protected text", (root / record.text_name).read_text())
+
+    def test_authentication_failure_stops_remaining_records(self):
+        class Adapter:
+            resolved: list[str] = []
+
+            def resolve_document(self, driver, record):
+                self.resolved.append(record.key)
+                return "http://127.0.0.1/document"
+
+        class Driver:
+            def get_cookies(self):
+                return []
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.settings(root)
+            settings = Settings(
+                output_dir=settings.output_dir,
+                site=settings.site,
+                browser=settings.browser,
+                allowed_download_hosts=settings.allowed_download_hosts,
+                request_delay_seconds=0,
+            )
+            adapter = Adapter()
+            with State(root / "state.sqlite3") as state:
+                state.upsert("first", "https://example.test/1")
+                state.upsert("second", "https://example.test/2")
+                with mock.patch(
+                    "scraper.pipeline.download_pdf",
+                    side_effect=AuthenticationError("expired"),
+                ):
+                    with self.assertRaises(AuthenticationError):
+                        process_downloads(Driver(), adapter, settings, state)
+                self.assertEqual(adapter.resolved, ["first"])
+
+    def test_host_only_cookie_is_not_sent_to_child_host(self):
+        jar = _cookie_jar(
+            [{"name": "session", "value": "secret", "domain": "app.example.test", "path": "/"}]
+        )
+        exact = urllib.request.Request("https://app.example.test/file")
+        child = urllib.request.Request("https://cdn.app.example.test/file")
+        jar.add_cookie_header(exact)
+        jar.add_cookie_header(child)
+        self.assertEqual(exact.get_header("Cookie"), "session=secret")
+        self.assertIsNone(child.get_header("Cookie"))
+
+    def test_explicit_domain_cookie_can_be_sent_to_child_host(self):
+        jar = _cookie_jar(
+            [{"name": "shared", "value": "yes", "domain": ".example.test", "path": "/"}]
+        )
+        child = urllib.request.Request("https://cdn.example.test/file")
+        jar.add_cookie_header(child)
+        self.assertEqual(child.get_header("Cookie"), "shared=yes")
 
 
 if __name__ == "__main__":

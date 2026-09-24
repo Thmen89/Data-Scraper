@@ -22,6 +22,8 @@ class RecordRef:
 
 
 class SiteAdapter(Protocol):
+    def prepare(self, driver: WebDriver) -> None: ...
+
     def discover(self, driver: WebDriver) -> Iterable[RecordRef]: ...
 
     def resolve_document(self, driver: WebDriver, record: RecordRef) -> str: ...
@@ -33,9 +35,11 @@ class GenericSiteAdapter:
     def __init__(self, settings: Settings):
         self.settings = settings
 
+    def prepare(self, driver: WebDriver) -> None:
+        driver.get(self.settings.site.start_url)
+
     def discover(self, driver: WebDriver) -> Iterable[RecordRef]:
         site = self.settings.site
-        driver.get(site.start_url)
         seen_pages: set[tuple[str, tuple[str, ...]]] = set()
         while True:
             WebDriverWait(driver, self.settings.browser.page_timeout_seconds).until(
