@@ -1,0 +1,23 @@
+# Site-specific information must stay local.
+/private/
+/config.json
+
+# Scraped data and runtime state.
+/output/
+/downloads/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.part
+
+# Browser/debug artifacts.
+/browser-profile/
+/screenshots/
+/page-source/
+
+# Python.
+__pycache__/
+*.py[cod]
+.venv/
+.coverage
+htmlcov/
