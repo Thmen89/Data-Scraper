@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import importlib.util
+import time
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 from urllib.parse import urljoin
 
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.support import expected_conditions as conditions
 from selenium.webdriver.support.ui import WebDriverWait
 
 from scraper.config import Settings
@@ -29,6 +33,43 @@ class SiteAdapter(Protocol):
     def resolve_document(self, driver: WebDriver, record: RecordRef) -> str: ...
 
 
+def wait_for_css(
+    driver: WebDriver, selector: str, timeout_seconds: float, purpose: str = "page content"
+) -> WebElement:
+    """Wait for a visible element that proves the UI reached its next state."""
+    try:
+        return WebDriverWait(driver, timeout_seconds).until(
+            conditions.visibility_of_element_located((By.CSS_SELECTOR, selector))
+        )
+    except TimeoutException as exc:
+        raise RuntimeError(
+            f"timed out after {timeout_seconds:g}s waiting for {purpose}; "
+            f"check selector {selector!r}, login state, and page_timeout_seconds"
+        ) from exc
+
+
+def click_when_ready(
+    driver: WebDriver,
+    selector: str,
+    next_selector: str,
+    timeout_seconds: float,
+    delay_seconds: float = 0,
+) -> WebElement:
+    """Click when enabled, then wait for visible evidence of the next UI state."""
+    try:
+        element = WebDriverWait(driver, timeout_seconds).until(
+            conditions.element_to_be_clickable((By.CSS_SELECTOR, selector))
+        )
+        element.click()
+        if delay_seconds:
+            time.sleep(delay_seconds)
+    except TimeoutException as exc:
+        raise RuntimeError(
+            f"timed out after {timeout_seconds:g}s waiting to click {selector!r}"
+        ) from exc
+    return wait_for_css(driver, next_selector, timeout_seconds, "the next UI step")
+
+
 class GenericSiteAdapter:
     """Adapter for conventional paginated listing and detail pages."""
 
@@ -37,13 +78,17 @@ class GenericSiteAdapter:
 
     def prepare(self, driver: WebDriver) -> None:
         driver.get(self.settings.site.start_url)
+        self._step_delay()
 
     def discover(self, driver: WebDriver) -> Iterable[RecordRef]:
         site = self.settings.site
         seen_pages: set[tuple[str, tuple[str, ...]]] = set()
         while True:
-            WebDriverWait(driver, self.settings.browser.page_timeout_seconds).until(
-                lambda browser: browser.find_elements(By.CSS_SELECTOR, site.item_selector)
+            wait_for_css(
+                driver,
+                site.item_selector,
+                self.settings.browser.page_timeout_seconds,
+                "listing items",
             )
             elements = driver.find_elements(By.CSS_SELECTOR, site.item_selector)
             page_records: list[RecordRef] = []
@@ -82,17 +127,33 @@ class GenericSiteAdapter:
             if not next_url:
                 raise RuntimeError("the next-page element must have an href")
             driver.get(urljoin(driver.current_url, next_url))
+            self._step_delay()
 
     def resolve_document(self, driver: WebDriver, record: RecordRef) -> str:
         driver.get(record.detail_url)
+        self._step_delay()
         selector = self.settings.site.download_selector
-        element = WebDriverWait(
-            driver, self.settings.browser.page_timeout_seconds
-        ).until(lambda browser: browser.find_element(By.CSS_SELECTOR, selector))
-        url = element.get_attribute("href")
-        if not url:
-            raise RuntimeError("the download element must have an href")
+        wait_for_css(
+            driver,
+            selector,
+            self.settings.browser.page_timeout_seconds,
+            "the document download link",
+        )
+        try:
+            url = WebDriverWait(
+                driver, self.settings.browser.page_timeout_seconds
+            ).until(
+                lambda browser: browser.find_element(
+                    By.CSS_SELECTOR, selector
+                ).get_attribute("href")
+            )
+        except TimeoutException as exc:
+            raise RuntimeError("the download element never supplied an href") from exc
         return urljoin(driver.current_url, url)
+
+    def _step_delay(self) -> None:
+        if self.settings.browser.step_delay_seconds:
+            time.sleep(self.settings.browser.step_delay_seconds)
 
 
 def load_adapter(settings: Settings) -> SiteAdapter:

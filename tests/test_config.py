@@ -23,12 +23,14 @@ class ConfigTests(unittest.TestCase):
                         "start_url": "https://docs.example.test/list",
                         "item_selector": ".item",
                     },
+                    "browser": {"step_delay_seconds": 1.5},
                 },
             )
             settings = load_settings(path)
             self.assertEqual(settings.output_dir, root / "collected")
             self.assertEqual(settings.allowed_download_hosts, ("docs.example.test",))
             self.assertTrue(settings.browser.headless)
+            self.assertEqual(settings.browser.step_delay_seconds, 1.5)
 
     def test_rejects_non_http_source(self):
         with tempfile.TemporaryDirectory() as temporary:

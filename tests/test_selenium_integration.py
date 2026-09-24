@@ -10,7 +10,7 @@ from scraper.browser import create_browser
 from scraper.cli import main
 from scraper.config import BrowserSettings, Settings, SiteSettings
 from scraper.pipeline import discover, process_downloads, process_extractions, reconcile_files
-from scraper.site import GenericSiteAdapter
+from scraper.site import GenericSiteAdapter, click_when_ready
 from scraper.state import State
 from tests.pdf_factory import pdf_bytes
 
@@ -27,10 +27,28 @@ class FakeSiteHandler(BaseHTTPRequestHandler):
                 cookie=True,
             )
         elif self.path == "/list?page=2":
-            self._html('<div class="item" data-id="gamma"><a class="details" href="/detail/gamma">Gamma</a></div>')
+            self._html(
+                '<div id="items"></div><script>'
+                "setTimeout(() => { document.getElementById('items').innerHTML = "
+                "'<div class=\"item\" data-id=\"gamma\"><a class=\"details\" "
+                "href=\"/detail/gamma\">Gamma</a></div>'; }, 300);"
+                "</script>"
+            )
         elif self.path.startswith("/detail/"):
             key = self.path.rsplit("/", 1)[-1]
-            self._html(f'<a class="download" href="/pdf/{key}">PDF</a>')
+            self._html(
+                '<div id="download"></div><script>'
+                "setTimeout(() => { document.getElementById('download').innerHTML = "
+                f"'<a class=\"download\" href=\"/pdf/{key}\">PDF</a>'; }}, 250);"
+                "</script>"
+            )
+        elif self.path == "/dynamic-step":
+            self._html(
+                '<button id="open" onclick="setTimeout(() => {'
+                "document.getElementById('result').innerHTML = '<span class=ready>Ready</span>';"
+                '}, 250)">Open</button>'
+                '<div id="result"></div>'
+            )
         elif self.path.startswith("/pdf/") and "session=active" in self.headers.get("Cookie", ""):
             self.send_response(200)
             self.send_header("Content-Type", "application/pdf")
@@ -88,6 +106,9 @@ class SeleniumIntegrationTests(unittest.TestCase):
                     self.assertEqual(state.counts()["extracted"], 3)
                     self.assertEqual(len(list(output.glob("*.pdf"))), 3)
                     self.assertEqual(len(list(output.glob("*.txt"))), 3)
+                    driver.get(f"{root}/dynamic-step")
+                    ready = click_when_ready(driver, "#open", ".ready", 5)
+                    self.assertEqual(ready.text, "Ready")
         finally:
             server.shutdown()
             server.server_close()
@@ -115,6 +136,7 @@ class SeleniumIntegrationTests(unittest.TestCase):
                                     "next_page_selector": "a.next",
                                     "download_selector": "a.download",
                                 },
+                                "browser": {"step_delay_seconds": 0.05},
                                 "allowed_download_hosts": ["127.0.0.1"],
                                 "request_delay_seconds": 0,
                             }

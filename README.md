@@ -125,6 +125,28 @@ URL. The core continues to own filenames, retries, checkpointing, downloads,
 extraction, and manifests. Standard direct GET downloads are supported; POST,
 `blob:` URLs, CAPTCHA, and browser-only downloads need a narrow custom change.
 
+### Waiting for dynamic pages
+
+For a predictable site, set `browser.step_delay_seconds` to the observed average
+load time plus a buffer. The generic adapter pauses for that duration after each
+navigation. It then still waits for listing items or a download link, so a
+single unusually slow page does not immediately fail. Increase
+`browser.page_timeout_seconds` if the longest pages need more than 30 seconds.
+
+For multi-click private adapters, wait for visible evidence of the next state:
+
+```python
+from scraper.site import click_when_ready, wait_for_css
+
+wait_for_css(driver, ".initial-panel", 30)
+click_when_ready(driver, "button.open", ".next-panel", 30, delay_seconds=1.5)
+click_when_ready(driver, "button.continue", "a.pdf-download", 30, delay_seconds=1.5)
+```
+
+For the simplest private adapter, ordinary `time.sleep(...)` calls are also
+fine. Use a `next_selector` only where timings vary enough to make the fixed
+buffer unreliable.
+
 ## Validation
 
 Fast tests:

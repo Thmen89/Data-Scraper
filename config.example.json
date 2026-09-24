@@ -10,7 +10,8 @@
   },
   "browser": {
     "headless": true,
-    "page_timeout_seconds": 30
+    "page_timeout_seconds": 30,
+    "step_delay_seconds": 1
   },
   "allowed_download_hosts": ["example.invalid"],
   "request_delay_seconds": 1,

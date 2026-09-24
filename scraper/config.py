@@ -16,6 +16,7 @@ class ConfigError(ValueError):
 class BrowserSettings:
     headless: bool = True
     page_timeout_seconds: float = 30.0
+    step_delay_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,11 @@ def load_settings(path: str | Path) -> Settings:
             page_timeout_seconds=_positive_number(
                 browser_raw.get("page_timeout_seconds", 30),
                 "browser.page_timeout_seconds",
+            ),
+            step_delay_seconds=_positive_number(
+                browser_raw.get("step_delay_seconds", 0),
+                "browser.step_delay_seconds",
+                allow_zero=True,
             ),
         ),
         adapter_path=adapter_path,

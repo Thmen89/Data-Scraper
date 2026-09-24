@@ -41,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_counts(state: State) -> None:
+def _print_counts(state: State) -> dict[str, int]:
     counts = state.counts()
     print(
         " | ".join(
@@ -49,6 +49,19 @@ def _print_counts(state: State) -> None:
             for name in ("total", "pending", "downloaded", "extracted", "no_text", "failed")
         )
     )
+    return counts
+
+
+def _print_guidance(counts: dict[str, int]) -> None:
+    if counts["pending"]:
+        print("Next: run 'download' to process pending records.")
+    if counts["failed"]:
+        print(
+            "Some records failed. Run again to retry up to max_retries; "
+            "see manifest.jsonl for details."
+        )
+    if counts["no_text"]:
+        print("Some PDFs had no extractable text and may require OCR; originals were kept.")
 
 
 def _with_browser(command: str, settings: Settings, state: State) -> None:
@@ -77,8 +90,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     process_extractions(settings, state)
                 if args.command in {"run", "discover", "download", "extract", "manifest"}:
                     write_manifest(state, settings.output_dir)
-                _print_counts(state)
-                counts = state.counts()
+                counts = _print_counts(state)
+                _print_guidance(counts)
                 if args.command == "run" and (
                     counts["pending"] or counts["failed"] or counts["no_text"]
                 ):
@@ -86,6 +99,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     except (ConfigError, RuntimeError, OSError, WebDriverException) as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(
+            f"Unexpected error ({type(exc).__name__}): {exc}. "
+            "No completed files were removed; rerun 'status' before retrying.",
+            file=sys.stderr,
+        )
         return 1
 
 
